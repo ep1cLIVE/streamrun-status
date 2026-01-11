@@ -2,10 +2,11 @@ from flask import Flask, request, jsonify
 import os
 import requests
 from datetime import datetime
+import json
 
 app = Flask(__name__)
 
-STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "Qcd3vB4x85XSTuw683O9CaYXC6DU17sgDjamzmrgxks=")
+STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "Qcd3vB4x85XSTuw683O9CaYXC6DU17sgDjamzmrgxks")
 CONFIGURATION_ID = os.environ.get("STREAMRUN_CONFIGURATION_ID", "cmk8ofbmy005npb01zxi6yzec")
 
 BASE_URL = "https://streamrun.com/api/v1"
@@ -21,16 +22,20 @@ current_instance = {
     "state": "UNKNOWN"
 }
 
-# Cache ingests with categories
-ingests_cache = {
+# Cache elements with categories
+elements_cache = {
     "PC": None,
     "Mobile": None,
-    "BRB": None
+    "BRB Screen": None
 }
 
+# Store the switch element ID (found from config)
+switch_element_id = None
 
-def fetch_and_categorize_ingests():
-    """Fetch ingests from configuration and categorize them."""
+
+def fetch_and_categorize_elements():
+    """Fetch elements from configuration and categorize them."""
+    global switch_element_id
     try:
         url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}"
         r = requests.get(url, headers=HEADERS)
@@ -43,35 +48,41 @@ def fetch_and_categorize_ingests():
         elements = config.get("elements", [])
         
         # Reset categories
-        ingests_cache["PC"] = None
-        ingests_cache["Mobile"] = None
-        ingests_cache["BRB"] = None
+        elements_cache["PC"] = None
+        elements_cache["Mobile"] = None
+        elements_cache["BRB Screen"] = None
         
-        # Map ingests and other inputs
+        # Map elements by title and find switch element
         for element in elements:
             elem_id = element.get("id", "")
             elem_title = element.get("title", "")
             elem_type = element.get("type", "")
             
-            # Match by title or ID
+            # Find the switch element
+            if elem_type == "switch" or "switch" in elem_id.lower():
+                switch_element_id = elem_id
+                print(f"Found switch element: {elem_id}")
+            
+            # Match by title
             title_lower = elem_title.lower()
             
-            if "pc" in title_lower or "pc ingest" in title_lower:
-                ingests_cache["PC"] = {"name": elem_title, "id": elem_id, "type": elem_type}
-            elif "mobile" in title_lower or "mobile ingest" in title_lower:
-                ingests_cache["Mobile"] = {"name": elem_title, "id": elem_id, "type": elem_type}
-            elif "brb" in title_lower or "be right back" in title_lower or "brb screen" in title_lower:
-                ingests_cache["BRB"] = {"name": elem_title, "id": elem_id, "type": elem_type}
+            if "pc" in title_lower and "screen" not in title_lower and "mobile" not in title_lower:
+                elements_cache["PC"] = {"name": elem_title, "id": elem_id, "type": elem_type}
+            elif "mobile" in title_lower:
+                elements_cache["Mobile"] = {"name": elem_title, "id": elem_id, "type": elem_type}
+            elif "brb" in title_lower or "be right back" in title_lower or "break" in title_lower:
+                elements_cache["BRB Screen"] = {"name": elem_title, "id": elem_id, "type": elem_type}
         
-        print(f"Ingests loaded: PC={ingests_cache['PC']}, Mobile={ingests_cache['Mobile']}, BRB={ingests_cache['BRB']}")
+        print(f"Elements loaded: PC={elements_cache['PC']}, Mobile={elements_cache['Mobile']}, BRB Screen={elements_cache['BRB Screen']}")
+        print(f"Switch element ID: {switch_element_id}")
         return True
     except Exception as e:
-        print(f"Error fetching ingests: {e}")
+        print(f"Error fetching elements: {e}")
         return False
 
 
-# Fetch ingests on startup
-fetch_and_categorize_ingests()
+# Fetch elements on startup
+fetch_and_categorize_elements()
 
 
 # ============ WEB DASHBOARD ============
@@ -248,7 +259,7 @@ def dashboard():
                 background: #5a6268;
             }
             
-            .btn-ingest {
+            .btn-element {
                 background: #667eea;
                 color: white;
                 padding: 14px 12px;
@@ -256,16 +267,16 @@ def dashboard():
                 font-size: 13px;
             }
             
-            .btn-ingest:hover {
+            .btn-element:hover {
                 background: #5568d3;
             }
             
-            .btn-ingest.active {
+            .btn-element.active {
                 background: #28a745;
                 box-shadow: 0 0 10px rgba(40, 167, 69, 0.4);
             }
             
-            .ingest-name {
+            .element-name {
                 font-size: 11px;
                 margin-top: 4px;
                 opacity: 0.9;
@@ -405,13 +416,13 @@ def dashboard():
                     </div>
                 </div>
                 
-                <!-- Ingest Selection Panel -->
+                <!-- Element Selection Panel -->
                 <div class="panel">
                     <div class="panel-title">
-                        Ingest
-                        <span class="status-badge offline">Offline</span>
+                        Element
+                        <span class="status-badge offline">Select</span>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;" id="ingestButtons">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;" id="elementButtons">
                         <!-- Buttons will be inserted here by JavaScript -->
                     </div>
                 </div>
@@ -437,7 +448,7 @@ def dashboard():
         
         <script>
             const API_BASE = window.location.origin;
-            let currentIngest = null;
+            let currentElement = null;
             
             function showMessage(text, type = 'info') {
                 const msg = document.getElementById('message');
@@ -460,32 +471,32 @@ def dashboard():
                         
                         const statusBadge = document.getElementById('streamStatus');
                         const state = (data.state || 'UNKNOWN').toLowerCase();
-                        statusBadge.className = `status-badge ${state === 'running' ? 'online' : 'offline'}`;
+                        statusBadge.className = `status-badge ${state === 'running' || state === 'queued' ? 'online' : 'offline'}`;
                         statusBadge.textContent = data.state || 'UNKNOWN';
                     })
                     .catch(e => console.error('Error refreshing:', e));
             }
             
-            function loadIngests() {
-                fetch(`${API_BASE}/api/ingests-categorized`)
+            function loadElements() {
+                fetch(`${API_BASE}/api/elements-categorized`)
                     .then(r => r.json())
                     .then(data => {
-                        const container = document.getElementById('ingestButtons');
+                        const container = document.getElementById('elementButtons');
                         container.innerHTML = '';
                         
-                        const categories = ['PC', 'Mobile', 'BRB'];
+                        const categories = ['PC', 'Mobile', 'BRB Screen'];
                         categories.forEach(cat => {
                             if (data[cat] && data[cat].id) {
                                 const btn = document.createElement('button');
-                                btn.className = 'btn btn-ingest';
-                                btn.setAttribute('data-ingest-id', data[cat].id);
-                                btn.innerHTML = `💻 ${cat}<span class="ingest-name">${data[cat].name}</span>`;
-                                btn.onclick = () => switchIngestTo(data[cat].id, btn);
+                                btn.className = 'btn btn-element';
+                                btn.setAttribute('data-element-id', data[cat].id);
+                                btn.innerHTML = `📺 ${cat}<span class="element-name">${data[cat].name}</span>`;
+                                btn.onclick = () => switchElementTo(data[cat].id, btn);
                                 container.appendChild(btn);
                             }
                         });
                     })
-                    .catch(e => console.error('Error loading ingests:', e));
+                    .catch(e => console.error('Error loading elements:', e));
             }
             
             function callAPI(endpoint, params = '') {
@@ -522,23 +533,23 @@ def dashboard():
                 callAPI('/api/outputs?state=OFFLINE');
             }
             
-            function switchIngestTo(ingestId, btnElement) {
+            function switchElementTo(elementId, btnElement) {
                 setLoading(true);
-                const url = `${API_BASE}/api/switch-ingest?ingest_id=${encodeURIComponent(ingestId)}`;
+                const url = `${API_BASE}/api/switch-element?element_id=${encodeURIComponent(elementId)}`;
                 fetch(url)
                     .then(r => r.text())
                     .then(text => {
                         showMessage(text, 'success');
                         
                         // Update active button styling
-                        document.querySelectorAll('#ingestButtons .btn-ingest').forEach(btn => {
+                        document.querySelectorAll('#elementButtons .btn-element').forEach(btn => {
                             btn.classList.remove('active');
                         });
                         if (btnElement) {
                             btnElement.classList.add('active');
                         }
                         
-                        currentIngest = ingestId;
+                        currentElement = elementId;
                         setLoading(false);
                     })
                     .catch(e => {
@@ -549,13 +560,13 @@ def dashboard():
             
             function refreshStatus() {
                 refreshInstanceData();
-                loadIngests();
+                loadElements();
                 showMessage('Status refreshed', 'info');
             }
             
             // Load on startup
             refreshInstanceData();
-            loadIngests();
+            loadElements();
         </script>
     </body>
     </html>
@@ -573,13 +584,13 @@ def instance_data():
     })
 
 
-@app.route("/api/ingests-categorized")
-def get_ingests_categorized():
-    """Get categorized ingests (PC, Mobile, BRB)."""
+@app.route("/api/elements-categorized")
+def get_elements_categorized():
+    """Get categorized elements (PC, Mobile, BRB Screen)."""
     return jsonify({
-        "PC": ingests_cache["PC"],
-        "Mobile": ingests_cache["Mobile"],
-        "BRB": ingests_cache["BRB"]
+        "PC": elements_cache["PC"],
+        "Mobile": elements_cache["Mobile"],
+        "BRB Screen": elements_cache["BRB Screen"]
     })
 
 
@@ -589,135 +600,198 @@ def get_ingests_categorized():
 @app.route("/api/status")
 def api_status():
     """Check instance status - returns plain text."""
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance. Go live first."
+    try:
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance. Go live first."
 
-    url = f"{BASE_URL}/instances/{instance_id}"
-    r = requests.get(url, headers=HEADERS)
-    if not r.ok:
-        return f"Error {r.status_code}"
+        url = f"{BASE_URL}/instances/{instance_id}"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            return f"Error {r.status_code}"
 
-    data = r.json()
-    state = data.get("state", "UNKNOWN")
-    current_instance["state"] = state
-    return state
+        data = r.json()
+        state = data.get("state", "UNKNOWN")
+        current_instance["state"] = state
+        return state
+    except Exception as e:
+        print(f"Error in api_status: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/golive")
 def api_golive():
-    """Start instance - returns plain text."""
-    body = {
-        "numberOfInstances": 1,
-        "instanceSettings": [
-            {
-                "name": "Live Stream Instance",
-                "overrides": {}
-            }
-        ]
-    }
+    """Start instance - returns plain text. Detects if already running by 0 slots error."""
+    try:
+        body = {
+            "numberOfInstances": 1,
+            "instanceSettings": [
+                {
+                    "name": "Live Stream Instance",
+                    "overrides": {}
+                }
+            ]
+        }
 
-    url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
-    r = requests.post(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error starting instance: {r.status_code} {r.text}"
+        url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        print(f"POST {url} with body: {body}")
+        r = requests.post(url, headers=HEADERS, json=body)
+        
+        # Check if instance is already running (0 slots available)
+        if r.status_code == 400:
+            error_text = r.text.lower()
+            if "0 instance slots" in error_text or "no available slots" in error_text:
+                print("Instance already running (no slots available)")
+                # Get existing instance
+                instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+                instances_r = requests.get(instances_url, headers=HEADERS)
+                
+                if instances_r.ok:
+                    instances_data = instances_r.json()
+                    instances = instances_data.get("instances", [])
+                    if instances:
+                        for inst in instances:
+                            state = inst.get("state", "").upper()
+                            if state in ("RUNNING", "QUEUED", "STARTING"):
+                                instance_id = inst.get("id")
+                                if instance_id:
+                                    current_instance["id"] = instance_id
+                                    current_instance["state"] = state
+                                    created_at = inst.get("createdAt") or inst.get("created_at")
+                                    current_instance["started_at"] = created_at
+                                    return f"Instance already running: {state}"
+                
+                return "Instance already running"
+            else:
+                return f"Error: {r.text}"
+        
+        if not r.ok:
+            error_text = r.text
+            print(f"Error {r.status_code}: {error_text}")
+            return f"Error {r.status_code}: {error_text}"
 
-    instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
-    instances_r = requests.get(instances_url, headers=HEADERS)
-    
-    if instances_r.ok:
-        instances = instances_r.json()
-        if instances:
-            latest = instances[0]
-            instance_id = latest.get("id")
-            if instance_id:
-                current_instance["id"] = instance_id
-                current_instance["started_at"] = datetime.now().isoformat()
-                current_instance["state"] = "QUEUED"
-                return "Starting stream"
+        # Successfully created new instance
+        instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        instances_r = requests.get(instances_url, headers=HEADERS)
+        
+        if instances_r.ok:
+            instances_data = instances_r.json()
+            instances = instances_data.get("instances", [])
+            if instances:
+                latest = instances[0]
+                instance_id = latest.get("id")
+                if instance_id:
+                    current_instance["id"] = instance_id
+                    current_instance["started_at"] = datetime.now().isoformat()
+                    current_instance["state"] = "RUNNING"
+                    return "Starting stream"
 
-    return "Stream starting"
+        return "Stream starting"
+    except Exception as e:
+        print(f"Error in api_golive: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/stop")
 def api_stop():
     """Stop instance - returns plain text."""
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance"
-    
-    url = f"{BASE_URL}/instances/{instance_id}"
-    r = requests.delete(url, headers=HEADERS)
-    if r.status_code in (200, 204):
-        current_instance["id"] = None
-        current_instance["state"] = "STOPPED"
-        return "Stream stopped"
-    return f"Error {r.status_code}: {r.text}"
+    try:
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance"
+        
+        url = f"{BASE_URL}/instances/{instance_id}"
+        r = requests.delete(url, headers=HEADERS)
+        if r.status_code in (200, 204):
+            current_instance["id"] = None
+            current_instance["state"] = "STOPPED"
+            return "Stream stopped"
+        return f"Error {r.status_code}: {r.text}"
+    except Exception as e:
+        print(f"Error in api_stop: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/outputs")
 def api_outputs():
-    """Toggle outputs - returns plain text."""
-    state = request.args.get("state", "LIVE").upper()
-    if state not in ("LIVE", "OFFLINE"):
-        return "Invalid state"
+    """Toggle outputs LIVE/OFFLINE - returns plain text."""
+    try:
+        state = request.args.get("state", "LIVE").upper()
+        if state not in ("LIVE", "OFFLINE"):
+            return "Invalid state"
 
-    instance_id = current_instance["id"]
-    if not instance_id:
-        return "No active instance. Start stream first."
+        instance_id = current_instance["id"]
+        if not instance_id:
+            return "No active instance. Start stream first."
 
-    # Correct endpoint: /instances/{id}/overrides
-    body = {
-        "outputstream-2": {
+        # Use PUT endpoint as per API docs for setting outputs
+        url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        body = {
             "outputs": state
         }
-    }
-    url = f"{BASE_URL}/instances/{instance_id}/overrides"
-    r = requests.patch(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error {r.status_code}: {r.text}"
+        print(f"PUT {url} with body: {body}")
+        r = requests.put(url, headers=HEADERS, json=body)
+        
+        if not r.ok:
+            print(f"Error {r.status_code}: {r.text}")
+            return f"Error {r.status_code}: {r.text}"
 
-    return f"Outputs {state}"
+        return f"Outputs {state}"
+    except Exception as e:
+        print(f"Error in api_outputs: {e}")
+        return f"Error: {str(e)}"
 
 
-@app.route("/api/switch-ingest")
-def api_switch_ingest():
-    """Switch ingest input - returns plain text."""
-    ingest_id = request.args.get("ingest_id")
-    if not ingest_id:
-        return "Missing ingest_id"
+@app.route("/api/switch-element")
+def api_switch_element():
+    """Switch element input - returns plain text. Uses PATCH /instances/{id}/overrides"""
+    try:
+        element_id = request.args.get("element_id")
+        if not element_id:
+            return "Missing element_id"
 
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance. Start stream first."
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance. Start stream first."
 
-    # Use correct endpoint for switching inputs
-    body = {
-        ingest_id: {
-            "enabled": True
+        if not switch_element_id:
+            return "Switch element not found in configuration"
+
+        # PATCH the switch element with the selected input
+        # Based on API docs: {"switch-1": {"input": "element-id"}}
+        body = {
+            switch_element_id: {
+                "input": element_id
+            }
         }
-    }
-    
-    url = f"{BASE_URL}/instances/{instance_id}/overrides"
-    r = requests.patch(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error {r.status_code}: {r.text}"
+        
+        url = f"{BASE_URL}/instances/{instance_id}/overrides"
+        print(f"PATCH {url} with body: {body}")
+        r = requests.patch(url, headers=HEADERS, json=body)
+        
+        if not r.ok:
+            print(f"Error {r.status_code}: {r.text}")
+            return f"Error {r.status_code}: {r.text}"
 
-    return f"Switched to {ingest_id}"
+        print(f"Successfully switched to element {element_id}")
+        return f"Switched to element"
+    except Exception as e:
+        print(f"Error in api_switch_element: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/destinations")
 def api_destinations():
     """List destinations - returns plain text."""
-    url = f"{BASE_URL}/destinations"
-    r = requests.get(url, headers=HEADERS)
-    if not r.ok:
-        return f"Error {r.status_code}"
-
     try:
+        url = f"{BASE_URL}/destinations"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            return f"Error {r.status_code}"
+
         data = r.json()
         lines = []
         for d in data:
@@ -725,8 +799,16 @@ def api_destinations():
             dest_id = d.get("id", "no-id")
             lines.append(f"{name}:{dest_id}")
         return " | ".join(lines) or "No destinations"
-    except Exception:
-        return "Error parsing"
+    except Exception as e:
+        print(f"Error in api_destinations: {e}")
+        return f"Error: {str(e)}"
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Handle 500 errors gracefully."""
+    print(f"500 Error: {e}")
+    return f"Server Error: {str(e)}", 500
 
 
 if __name__ == "__main__":
