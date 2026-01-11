@@ -621,7 +621,7 @@ def api_golive():
     url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
     r = requests.post(url, headers=HEADERS, json=body)
     if not r.ok:
-        return f"Error {r.status_code}"
+        return f"Error starting instance: {r.status_code} {r.text}"
 
     instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
     instances_r = requests.get(instances_url, headers=HEADERS)
@@ -654,7 +654,7 @@ def api_stop():
         current_instance["id"] = None
         current_instance["state"] = "STOPPED"
         return "Stream stopped"
-    return f"Error {r.status_code}"
+    return f"Error {r.status_code}: {r.text}"
 
 
 @app.route("/api/outputs")
@@ -666,13 +666,18 @@ def api_outputs():
 
     instance_id = current_instance["id"]
     if not instance_id:
-        return "No active instance"
+        return "No active instance. Start stream first."
 
-    body = {"outputs": state}
-    url = f"{BASE_URL}/instances/{instance_id}/outputs"
+    # Correct endpoint: /instances/{id}/overrides
+    body = {
+        "outputstream-2": {
+            "outputs": state
+        }
+    }
+    url = f"{BASE_URL}/instances/{instance_id}/overrides"
     r = requests.patch(url, headers=HEADERS, json=body)
     if not r.ok:
-        return f"Error {r.status_code}"
+        return f"Error {r.status_code}: {r.text}"
 
     return f"Outputs {state}"
 
@@ -687,22 +692,21 @@ def api_switch_ingest():
     instance_id = current_instance["id"]
     
     if not instance_id:
-        return "No active instance"
+        return "No active instance. Start stream first."
 
-    # Find which input stream this is
-    # Assuming inputstream-1, inputstream-2, or splitter-3
+    # Use correct endpoint for switching inputs
     body = {
         ingest_id: {
             "enabled": True
         }
     }
     
-    url = f"{BASE_URL}/instances/{instance_id}/inputs"
+    url = f"{BASE_URL}/instances/{instance_id}/overrides"
     r = requests.patch(url, headers=HEADERS, json=body)
     if not r.ok:
-        return f"Error {r.status_code}"
+        return f"Error {r.status_code}: {r.text}"
 
-    return "Ingest switched"
+    return f"Switched to {ingest_id}"
 
 
 @app.route("/api/destinations")
