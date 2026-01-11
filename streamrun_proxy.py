@@ -5,8 +5,8 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "YOUR_API_KEY_HERE")
-CONFIGURATION_ID = os.environ.get("STREAMRUN_CONFIGURATION_ID", "YOUR_CONFIGURATION_ID_HERE")
+STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "Qcd3vB4x85XSTuw683O9CaYXC6DU17sgDjamzmrgxks=")
+CONFIGURATION_ID = os.environ.get("STREAMRUN_CONFIGURATION_ID", "cmk8ofbmy005npb01zxi6yzec")
 
 BASE_URL = "https://streamrun.com/api/v1"
 HEADERS = {
@@ -20,6 +20,55 @@ current_instance = {
     "started_at": None,
     "state": "UNKNOWN"
 }
+
+# Cache destinations with categories
+destinations_cache = {
+    "PC": None,
+    "Mobile": None,
+    "BRB": None,
+    "all": []
+}
+
+
+def fetch_and_categorize_destinations():
+    """Fetch destinations from Streamrun and categorize them."""
+    try:
+        url = f"{BASE_URL}/destinations"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            return False
+        
+        data = r.json()
+        destinations_cache["all"] = data
+        
+        # Reset categories
+        destinations_cache["PC"] = None
+        destinations_cache["Mobile"] = None
+        destinations_cache["BRB"] = None
+        
+        # Categorize by name matching
+        for dest in data:
+            name = dest.get("name", "").lower()
+            dest_id = dest.get("id")
+            
+            if "pc" in name or "desktop" in name or "stream" in name:
+                if destinations_cache["PC"] is None:
+                    destinations_cache["PC"] = {"name": dest.get("name"), "id": dest_id}
+            elif "mobile" in name or "phone" in name or "vertical" in name:
+                if destinations_cache["Mobile"] is None:
+                    destinations_cache["Mobile"] = {"name": dest.get("name"), "id": dest_id}
+            elif "brb" in name or "away" in name or "be right back" in name:
+                if destinations_cache["BRB"] is None:
+                    destinations_cache["BRB"] = {"name": dest.get("name"), "id": dest_id}
+        
+        return True
+    except Exception as e:
+        print(f"Error fetching destinations: {e}")
+        return False
+
+
+# Fetch destinations on startup
+fetch_and_categorize_destinations()
 
 
 # ============ WEB DASHBOARD ============
@@ -115,6 +164,13 @@ def dashboard():
                 margin-bottom: 15px;
             }
             
+            .button-grid-3 {
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 10px;
+                margin-bottom: 15px;
+            }
+            
             .button {
                 padding: 14px 20px;
                 border: none;
@@ -129,6 +185,7 @@ def dashboard():
                 align-items: center;
                 justify-content: center;
                 gap: 8px;
+                flex-direction: column;
             }
             
             .button:hover {
@@ -175,6 +232,16 @@ def dashboard():
             
             .button-secondary:hover {
                 background: #5a6268;
+            }
+            
+            .button-ingest {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                font-size: 12px;
+            }
+            
+            .button-ingest:hover {
+                background: linear-gradient(135deg, #5568d3 0%, #653997 100%);
             }
             
             .button-full {
@@ -272,6 +339,22 @@ def dashboard():
                 margin: 20px 0;
             }
             
+            .section-title {
+                color: #333;
+                font-weight: 600;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 10px;
+                margin-top: 10px;
+            }
+            
+            .button-small-text {
+                font-size: 11px;
+                margin-top: 4px;
+                opacity: 0.9;
+            }
+            
             @media (max-width: 600px) {
                 .container {
                     padding: 20px;
@@ -316,30 +399,29 @@ def dashboard():
                 </button>
             </div>
             
-            <div class="button-grid">
-                <button class="button button-secondary button-full" onclick="toggleLive()">
-                    📡 Toggle Output (LIVE)
-                </button>
-                <button class="button button-secondary button-full" onclick="toggleOffline()">
-                    📡 Toggle Output (OFFLINE)
-                </button>
+            <div class="divider"></div>
+            
+            <div class="section-title">🎮 Switch Ingest</div>
+            <div class="button-grid-3" id="ingestButtons">
+                <!-- Buttons will be inserted here by JavaScript -->
             </div>
             
             <div class="divider"></div>
             
-            <div class="input-group">
-                <label for="destId">Destination ID (for ingest switch)</label>
-                <input type="text" id="destId" placeholder="Enter destination ID">
+            <div class="section-title">📡 Output Control</div>
+            <div class="button-grid">
+                <button class="button button-secondary button-full" onclick="toggleLive()">
+                    📡 LIVE
+                </button>
+                <button class="button button-secondary button-full" onclick="toggleOffline()">
+                    📡 OFFLINE
+                </button>
             </div>
-            
-            <button class="button button-secondary button-full" onclick="switchIngest()">
-                🔄 Switch Ingest
-            </button>
             
             <div class="divider"></div>
             
             <button class="button button-primary button-full" onclick="refreshStatus()">
-                🔄 Refresh Status
+                🔄 Refresh
             </button>
         </div>
         
@@ -370,6 +452,27 @@ def dashboard():
                         badge.textContent = data.state || 'UNKNOWN';
                     })
                     .catch(e => console.error('Error refreshing:', e));
+            }
+            
+            function loadDestinations() {
+                fetch(`${API_BASE}/api/destinations-categorized`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const container = document.getElementById('ingestButtons');
+                        container.innerHTML = '';
+                        
+                        const categories = ['PC', 'Mobile', 'BRB'];
+                        categories.forEach(cat => {
+                            if (data[cat] && data[cat].id) {
+                                const btn = document.createElement('button');
+                                btn.className = 'button button-ingest';
+                                btn.innerHTML = `💻 ${cat}<span class="button-small-text">${data[cat].name}</span>`;
+                                btn.onclick = () => switchIngestTo(data[cat].id);
+                                container.appendChild(btn);
+                            }
+                        });
+                    })
+                    .catch(e => console.error('Error loading destinations:', e));
             }
             
             function callAPI(endpoint, params = '') {
@@ -406,12 +509,7 @@ def dashboard():
                 callAPI('/api/outputs?state=OFFLINE');
             }
             
-            function switchIngest() {
-                const destId = document.getElementById('destId').value.trim();
-                if (!destId) {
-                    showMessage('Please enter a destination ID', 'error');
-                    return;
-                }
+            function switchIngestTo(destId) {
                 callAPI(`/api/switch?destination_id=${encodeURIComponent(destId)}`);
             }
             
@@ -422,6 +520,7 @@ def dashboard():
             
             // Load on startup
             refreshInstanceData();
+            loadDestinations();
         </script>
     </body>
     </html>
@@ -436,6 +535,16 @@ def instance_data():
         "id": current_instance["id"] or "None",
         "state": current_instance["state"],
         "started_at": current_instance["started_at"] or "—"
+    })
+
+
+@app.route("/api/destinations-categorized")
+def get_destinations_categorized():
+    """Get categorized destinations (PC, Mobile, BRB)."""
+    return jsonify({
+        "PC": destinations_cache["PC"],
+        "Mobile": destinations_cache["Mobile"],
+        "BRB": destinations_cache["BRB"]
     })
 
 
