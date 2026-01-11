@@ -21,54 +21,57 @@ current_instance = {
     "state": "UNKNOWN"
 }
 
-# Cache destinations with categories
-destinations_cache = {
+# Cache ingests with categories
+ingests_cache = {
     "PC": None,
     "Mobile": None,
-    "BRB": None,
-    "all": []
+    "BRB": None
 }
 
 
-def fetch_and_categorize_destinations():
-    """Fetch destinations from Streamrun and categorize them."""
+def fetch_and_categorize_ingests():
+    """Fetch ingests from configuration and categorize them."""
     try:
-        url = f"{BASE_URL}/destinations"
+        url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}"
         r = requests.get(url, headers=HEADERS)
         if not r.ok:
+            print(f"Error fetching config: {r.status_code}")
             return False
         
         data = r.json()
-        destinations_cache["all"] = data
+        config = data.get("configuration", {})
+        elements = config.get("elements", [])
         
         # Reset categories
-        destinations_cache["PC"] = None
-        destinations_cache["Mobile"] = None
-        destinations_cache["BRB"] = None
+        ingests_cache["PC"] = None
+        ingests_cache["Mobile"] = None
+        ingests_cache["BRB"] = None
         
-        # Categorize by name matching
-        for dest in data:
-            name = dest.get("name", "").lower()
-            dest_id = dest.get("id")
+        # Map ingests and other inputs
+        for element in elements:
+            elem_id = element.get("id", "")
+            elem_title = element.get("title", "")
+            elem_type = element.get("type", "")
             
-            if "pc" in name or "desktop" in name or "stream" in name:
-                if destinations_cache["PC"] is None:
-                    destinations_cache["PC"] = {"name": dest.get("name"), "id": dest_id}
-            elif "mobile" in name or "phone" in name or "vertical" in name:
-                if destinations_cache["Mobile"] is None:
-                    destinations_cache["Mobile"] = {"name": dest.get("name"), "id": dest_id}
-            elif "brb" in name or "away" in name or "be right back" in name:
-                if destinations_cache["BRB"] is None:
-                    destinations_cache["BRB"] = {"name": dest.get("name"), "id": dest_id}
+            # Match by title or ID
+            title_lower = elem_title.lower()
+            
+            if "pc" in title_lower or "pc ingest" in title_lower:
+                ingests_cache["PC"] = {"name": elem_title, "id": elem_id, "type": elem_type}
+            elif "mobile" in title_lower or "mobile ingest" in title_lower:
+                ingests_cache["Mobile"] = {"name": elem_title, "id": elem_id, "type": elem_type}
+            elif "brb" in title_lower or "be right back" in title_lower or "brb screen" in title_lower:
+                ingests_cache["BRB"] = {"name": elem_title, "id": elem_id, "type": elem_type}
         
+        print(f"Ingests loaded: PC={ingests_cache['PC']}, Mobile={ingests_cache['Mobile']}, BRB={ingests_cache['BRB']}")
         return True
     except Exception as e:
-        print(f"Error fetching destinations: {e}")
+        print(f"Error fetching ingests: {e}")
         return False
 
 
-# Fetch destinations on startup
-fetch_and_categorize_destinations()
+# Fetch ingests on startup
+fetch_and_categorize_ingests()
 
 
 # ============ WEB DASHBOARD ============
@@ -92,194 +95,185 @@ def dashboard():
             
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: #2a2a2a;
+                color: #fff;
                 min-height: 100vh;
-                display: flex;
-                justify-content: center;
-                align-items: center;
                 padding: 20px;
             }
             
-            .container {
-                background: white;
-                border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-                padding: 30px;
-                max-width: 500px;
-                width: 100%;
+            .dashboard {
+                max-width: 1200px;
+                margin: 0 auto;
             }
             
             .header {
-                text-align: center;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
                 margin-bottom: 30px;
             }
             
             .header h1 {
-                color: #333;
-                font-size: 28px;
-                margin-bottom: 10px;
-            }
-            
-            .status-badge {
-                display: inline-block;
-                padding: 8px 16px;
-                border-radius: 20px;
-                font-size: 14px;
+                font-size: 24px;
                 font-weight: 600;
-                margin: 10px 0;
-            }
-            
-            .status-running {
-                background: #d4edda;
-                color: #155724;
-            }
-            
-            .status-stopped {
-                background: #f8d7da;
-                color: #721c24;
-            }
-            
-            .status-unknown {
-                background: #e2e3e5;
-                color: #383d41;
-            }
-            
-            .instance-info {
-                background: #f8f9fa;
-                border-radius: 10px;
-                padding: 15px;
-                margin-bottom: 25px;
-                font-size: 13px;
-                color: #666;
-            }
-            
-            .instance-info strong {
-                color: #333;
-            }
-            
-            .button-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 12px;
-                margin-bottom: 15px;
-            }
-            
-            .button-grid-3 {
-                display: grid;
-                grid-template-columns: 1fr 1fr 1fr;
-                gap: 10px;
-                margin-bottom: 15px;
-            }
-            
-            .button {
-                padding: 14px 20px;
-                border: none;
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                text-align: center;
-                text-decoration: none;
                 display: flex;
                 align-items: center;
-                justify-content: center;
-                gap: 8px;
-                flex-direction: column;
+                gap: 10px;
             }
             
-            .button:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            .grid {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 20px;
+                margin-bottom: 20px;
             }
             
-            .button:active {
-                transform: translateY(0);
+            .panel {
+                background: #3a3a3a;
+                border-radius: 8px;
+                padding: 20px;
+                border: 1px solid #4a4a4a;
             }
             
-            .button-primary {
-                background: #667eea;
-                color: white;
-                grid-column: 1 / -1;
+            .panel-title {
+                font-size: 16px;
+                font-weight: 600;
+                margin-bottom: 15px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
             }
             
-            .button-primary:hover {
-                background: #5568d3;
+            .panel-title .status-badge {
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+                margin-left: auto;
             }
             
-            .button-success {
+            .status-badge.online {
                 background: #28a745;
                 color: white;
             }
             
-            .button-success:hover {
-                background: #218838;
-            }
-            
-            .button-danger {
+            .status-badge.offline {
                 background: #dc3545;
                 color: white;
             }
             
-            .button-danger:hover {
-                background: #c82333;
-            }
-            
-            .button-secondary {
+            .status-badge.unknown {
                 background: #6c757d;
                 color: white;
             }
             
-            .button-secondary:hover {
-                background: #5a6268;
-            }
-            
-            .button-ingest {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                font-size: 12px;
-            }
-            
-            .button-ingest:hover {
-                background: linear-gradient(135deg, #5568d3 0%, #653997 100%);
-            }
-            
-            .button-full {
-                grid-column: 1 / -1;
-            }
-            
-            .input-group {
+            .btn-group {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
                 margin-bottom: 15px;
             }
             
-            .input-group label {
-                display: block;
-                margin-bottom: 8px;
-                color: #333;
+            .btn-group.full {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn {
+                padding: 12px 16px;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
                 font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                text-align: center;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+            }
+            
+            .btn:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            }
+            
+            .btn:active {
+                transform: translateY(0);
+            }
+            
+            .btn-primary {
+                background: #667eea;
+                color: white;
+            }
+            
+            .btn-primary:hover {
+                background: #5568d3;
+            }
+            
+            .btn-success {
+                background: #28a745;
+                color: white;
+            }
+            
+            .btn-success:hover {
+                background: #218838;
+            }
+            
+            .btn-danger {
+                background: #dc3545;
+                color: white;
+            }
+            
+            .btn-danger:hover {
+                background: #c82333;
+            }
+            
+            .btn-info {
+                background: #17a2b8;
+                color: white;
+            }
+            
+            .btn-info:hover {
+                background: #138496;
+            }
+            
+            .btn-secondary {
+                background: #6c757d;
+                color: white;
+            }
+            
+            .btn-secondary:hover {
+                background: #5a6268;
+            }
+            
+            .btn-ingest {
+                background: #667eea;
+                color: white;
+                padding: 14px 12px;
+                flex-direction: column;
                 font-size: 13px;
             }
             
-            .input-group input,
-            .input-group select {
-                width: 100%;
-                padding: 10px 12px;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                font-size: 14px;
-                font-family: inherit;
+            .btn-ingest:hover {
+                background: #5568d3;
             }
             
-            .input-group input:focus,
-            .input-group select:focus {
-                outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            .btn-ingest.active {
+                background: #28a745;
+                box-shadow: 0 0 10px rgba(40, 167, 69, 0.4);
+            }
+            
+            .ingest-name {
+                font-size: 11px;
+                margin-top: 4px;
+                opacity: 0.9;
             }
             
             .message {
-                padding: 12px 15px;
-                border-radius: 8px;
+                padding: 12px 16px;
+                border-radius: 6px;
                 margin-bottom: 15px;
                 font-size: 13px;
                 display: none;
@@ -312,6 +306,7 @@ def dashboard():
                 text-align: center;
                 color: #667eea;
                 font-size: 13px;
+                padding: 10px;
             }
             
             .loading.show {
@@ -322,10 +317,11 @@ def dashboard():
                 display: inline-block;
                 width: 12px;
                 height: 12px;
-                border: 2px solid #f3f3f3;
+                border: 2px solid #4a4a4a;
                 border-top: 2px solid #667eea;
                 border-radius: 50%;
                 animation: spin 0.8s linear infinite;
+                margin-right: 6px;
             }
             
             @keyframes spin {
@@ -333,100 +329,115 @@ def dashboard():
                 100% { transform: rotate(360deg); }
             }
             
-            .divider {
-                height: 1px;
-                background: #eee;
-                margin: 20px 0;
-            }
-            
-            .section-title {
-                color: #333;
-                font-weight: 600;
-                font-size: 12px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
+            .info-block {
+                background: #2a2a2a;
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 13px;
                 margin-bottom: 10px;
-                margin-top: 10px;
             }
             
-            .button-small-text {
-                font-size: 11px;
-                margin-top: 4px;
-                opacity: 0.9;
+            .info-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 6px 0;
             }
             
-            @media (max-width: 600px) {
-                .container {
-                    padding: 20px;
-                    border-radius: 15px;
+            .info-row strong {
+                color: #aaa;
+            }
+            
+            .info-row span {
+                color: #fff;
+                font-weight: 600;
+            }
+            
+            .full-width {
+                grid-column: 1 / -1;
+            }
+            
+            @media (max-width: 1024px) {
+                .grid {
+                    grid-template-columns: repeat(2, 1fr);
                 }
-                
-                .header h1 {
-                    font-size: 24px;
-                }
-                
-                .button {
-                    padding: 12px 16px;
-                    font-size: 13px;
+            }
+            
+            @media (max-width: 768px) {
+                .grid {
+                    grid-template-columns: 1fr;
                 }
             }
         </style>
     </head>
     <body>
-        <div class="container">
+        <div class="dashboard">
             <div class="header">
-                <h1>🎬 Streamrun Control</h1>
-                <div class="status-badge status-unknown" id="statusBadge">
-                    Checking status...
+                <h1>🎬 Streamrun Control Panel</h1>
+                <div id="message" class="message"></div>
+            </div>
+            
+            <div id="loading" class="loading"><span class="spinner"></span> Loading...</div>
+            
+            <div class="grid">
+                <!-- Stream Control Panel -->
+                <div class="panel">
+                    <div class="panel-title">
+                        Stream
+                        <span class="status-badge offline" id="streamStatus">Offline</span>
+                    </div>
+                    <div class="btn-group full">
+                        <button class="btn btn-success" onclick="goLive()">▶ Start</button>
+                        <button class="btn btn-danger" onclick="stopInstance()">⏹ Stop</button>
+                    </div>
+                    <div class="info-block">
+                        <div class="info-row">
+                            <strong>Instance:</strong>
+                            <span id="instanceId">None</span>
+                        </div>
+                        <div class="info-row">
+                            <strong>State:</strong>
+                            <span id="instanceState">UNKNOWN</span>
+                        </div>
+                        <div class="info-row">
+                            <strong>Started:</strong>
+                            <span id="instanceTime">—</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Ingest Selection Panel -->
+                <div class="panel">
+                    <div class="panel-title">
+                        Ingest
+                        <span class="status-badge offline">Offline</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;" id="ingestButtons">
+                        <!-- Buttons will be inserted here by JavaScript -->
+                    </div>
+                </div>
+                
+                <!-- Scene / Output Selection Panel -->
+                <div class="panel">
+                    <div class="panel-title">
+                        Scene
+                        <span class="status-badge online">Active</span>
+                    </div>
+                    <div class="btn-group full">
+                        <button class="btn btn-primary" onclick="toggleLive()">📡 LIVE</button>
+                        <button class="btn btn-secondary" onclick="toggleOffline()">📡 OFFLINE</button>
+                    </div>
                 </div>
             </div>
             
-            <div id="message" class="message"></div>
-            <div class="loading" id="loading"><span class="spinner"></span> Loading...</div>
-            
-            <div class="instance-info">
-                <strong>Instance:</strong> <span id="instanceId">None</span><br>
-                <strong>State:</strong> <span id="instanceState">UNKNOWN</span><br>
-                <strong>Started:</strong> <span id="instanceTime">—</span>
+            <!-- Bottom action buttons -->
+            <div class="grid full-width" style="grid-template-columns: 1fr;">
+                <button class="btn btn-info" onclick="refreshStatus()">🔄 Refresh Status</button>
             </div>
-            
-            <div class="button-grid">
-                <button class="button button-success" onclick="goLive()">
-                    ▶ Go Live
-                </button>
-                <button class="button button-danger" onclick="stopInstance()">
-                    ⏹ Stop
-                </button>
-            </div>
-            
-            <div class="divider"></div>
-            
-            <div class="section-title">🎮 Switch Ingest</div>
-            <div class="button-grid-3" id="ingestButtons">
-                <!-- Buttons will be inserted here by JavaScript -->
-            </div>
-            
-            <div class="divider"></div>
-            
-            <div class="section-title">📡 Output Control</div>
-            <div class="button-grid">
-                <button class="button button-secondary button-full" onclick="toggleLive()">
-                    📡 LIVE
-                </button>
-                <button class="button button-secondary button-full" onclick="toggleOffline()">
-                    📡 OFFLINE
-                </button>
-            </div>
-            
-            <div class="divider"></div>
-            
-            <button class="button button-primary button-full" onclick="refreshStatus()">
-                🔄 Refresh
-            </button>
         </div>
         
         <script>
             const API_BASE = window.location.origin;
+            let currentIngest = null;
             
             function showMessage(text, type = 'info') {
                 const msg = document.getElementById('message');
@@ -447,15 +458,16 @@ def dashboard():
                         document.getElementById('instanceState').textContent = data.state || 'UNKNOWN';
                         document.getElementById('instanceTime').textContent = data.started_at || '—';
                         
-                        const badge = document.getElementById('statusBadge');
-                        badge.className = `status-badge status-${data.state.toLowerCase() || 'unknown'}`;
-                        badge.textContent = data.state || 'UNKNOWN';
+                        const statusBadge = document.getElementById('streamStatus');
+                        const state = (data.state || 'UNKNOWN').toLowerCase();
+                        statusBadge.className = `status-badge ${state === 'running' ? 'online' : 'offline'}`;
+                        statusBadge.textContent = data.state || 'UNKNOWN';
                     })
                     .catch(e => console.error('Error refreshing:', e));
             }
             
-            function loadDestinations() {
-                fetch(`${API_BASE}/api/destinations-categorized`)
+            function loadIngests() {
+                fetch(`${API_BASE}/api/ingests-categorized`)
                     .then(r => r.json())
                     .then(data => {
                         const container = document.getElementById('ingestButtons');
@@ -465,14 +477,15 @@ def dashboard():
                         categories.forEach(cat => {
                             if (data[cat] && data[cat].id) {
                                 const btn = document.createElement('button');
-                                btn.className = 'button button-ingest';
-                                btn.innerHTML = `💻 ${cat}<span class="button-small-text">${data[cat].name}</span>`;
-                                btn.onclick = () => switchIngestTo(data[cat].id);
+                                btn.className = 'btn btn-ingest';
+                                btn.setAttribute('data-ingest-id', data[cat].id);
+                                btn.innerHTML = `💻 ${cat}<span class="ingest-name">${data[cat].name}</span>`;
+                                btn.onclick = () => switchIngestTo(data[cat].id, btn);
                                 container.appendChild(btn);
                             }
                         });
                     })
-                    .catch(e => console.error('Error loading destinations:', e));
+                    .catch(e => console.error('Error loading ingests:', e));
             }
             
             function callAPI(endpoint, params = '') {
@@ -509,18 +522,40 @@ def dashboard():
                 callAPI('/api/outputs?state=OFFLINE');
             }
             
-            function switchIngestTo(destId) {
-                callAPI(`/api/switch?destination_id=${encodeURIComponent(destId)}`);
+            function switchIngestTo(ingestId, btnElement) {
+                setLoading(true);
+                const url = `${API_BASE}/api/switch-ingest?ingest_id=${encodeURIComponent(ingestId)}`;
+                fetch(url)
+                    .then(r => r.text())
+                    .then(text => {
+                        showMessage(text, 'success');
+                        
+                        // Update active button styling
+                        document.querySelectorAll('#ingestButtons .btn-ingest').forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                        if (btnElement) {
+                            btnElement.classList.add('active');
+                        }
+                        
+                        currentIngest = ingestId;
+                        setLoading(false);
+                    })
+                    .catch(e => {
+                        showMessage('Error: ' + e.message, 'error');
+                        setLoading(false);
+                    });
             }
             
             function refreshStatus() {
                 refreshInstanceData();
+                loadIngests();
                 showMessage('Status refreshed', 'info');
             }
             
             // Load on startup
             refreshInstanceData();
-            loadDestinations();
+            loadIngests();
         </script>
     </body>
     </html>
@@ -538,13 +573,13 @@ def instance_data():
     })
 
 
-@app.route("/api/destinations-categorized")
-def get_destinations_categorized():
-    """Get categorized destinations (PC, Mobile, BRB)."""
+@app.route("/api/ingests-categorized")
+def get_ingests_categorized():
+    """Get categorized ingests (PC, Mobile, BRB)."""
     return jsonify({
-        "PC": destinations_cache["PC"],
-        "Mobile": destinations_cache["Mobile"],
-        "BRB": destinations_cache["BRB"]
+        "PC": ingests_cache["PC"],
+        "Mobile": ingests_cache["Mobile"],
+        "BRB": ingests_cache["BRB"]
     })
 
 
@@ -573,8 +608,6 @@ def api_status():
 @app.route("/api/golive")
 def api_golive():
     """Start instance - returns plain text."""
-    dest_id = request.args.get("destination_id", "")
-
     body = {
         "numberOfInstances": 1,
         "instanceSettings": [
@@ -584,11 +617,6 @@ def api_golive():
             }
         ]
     }
-
-    if dest_id:
-        body["instanceSettings"][0]["overrides"]["outputstream-1"] = {
-            "destinations": [dest_id]
-        }
 
     url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
     r = requests.post(url, headers=HEADERS, json=body)
@@ -636,33 +664,40 @@ def api_outputs():
     if state not in ("LIVE", "OFFLINE"):
         return "Invalid state"
 
+    instance_id = current_instance["id"]
+    if not instance_id:
+        return "No active instance"
+
     body = {"outputs": state}
-    url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
-    r = requests.put(url, headers=HEADERS, json=body)
+    url = f"{BASE_URL}/instances/{instance_id}/outputs"
+    r = requests.patch(url, headers=HEADERS, json=body)
     if not r.ok:
         return f"Error {r.status_code}"
 
     return f"Outputs {state}"
 
 
-@app.route("/api/switch")
-def api_switch():
-    """Switch ingest - returns plain text."""
-    dest_id = request.args.get("destination_id")
-    if not dest_id:
-        return "Missing destination_id"
+@app.route("/api/switch-ingest")
+def api_switch_ingest():
+    """Switch ingest input - returns plain text."""
+    ingest_id = request.args.get("ingest_id")
+    if not ingest_id:
+        return "Missing ingest_id"
 
     instance_id = current_instance["id"]
     
     if not instance_id:
         return "No active instance"
 
+    # Find which input stream this is
+    # Assuming inputstream-1, inputstream-2, or splitter-3
     body = {
-        "outputstream-1": {
-            "destinations": [dest_id]
+        ingest_id: {
+            "enabled": True
         }
     }
-    url = f"{BASE_URL}/instances/{instance_id}/overrides"
+    
+    url = f"{BASE_URL}/instances/{instance_id}/inputs"
     r = requests.patch(url, headers=HEADERS, json=body)
     if not r.ok:
         return f"Error {r.status_code}"
