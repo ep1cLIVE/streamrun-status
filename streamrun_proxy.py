@@ -2,10 +2,11 @@ from flask import Flask, request, jsonify
 import os
 import requests
 from datetime import datetime
+import json
 
 app = Flask(__name__)
 
-STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "Qcd3vB4x85XSTuw683O9CaYXC6DU17sgDjamzmrgxks=")
+STREAMRUN_API_KEY = os.environ.get("STREAMRUN_API_KEY", "Qcd3vB4x85XSTuw683O9CaYXC6DU17sgDjamzmrgxks")
 CONFIGURATION_ID = os.environ.get("STREAMRUN_CONFIGURATION_ID", "cmk8ofbmy005npb01zxi6yzec")
 
 BASE_URL = "https://streamrun.com/api/v1"
@@ -70,8 +71,42 @@ def fetch_and_categorize_ingests():
         return False
 
 
-# Fetch ingests on startup
+def discover_running_instances():
+    """Auto-discover any running instances from Streamrun."""
+    try:
+        url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            print(f"Error discovering instances: {r.status_code}")
+            return False
+        
+        data = r.json()
+        instances = data.get("instances", [])
+        
+        if instances:
+            # Get the first running/queued instance
+            for instance in instances:
+                state = instance.get("state", "").upper()
+                if state in ("RUNNING", "QUEUED", "STARTING"):
+                    instance_id = instance.get("id")
+                    if instance_id:
+                        current_instance["id"] = instance_id
+                        current_instance["state"] = state
+                        created_at = instance.get("createdAt") or instance.get("created_at")
+                        current_instance["started_at"] = created_at
+                        print(f"Discovered running instance: {instance_id} (state: {state})")
+                        return True
+        
+        print("No running instances found")
+        return False
+    except Exception as e:
+        print(f"Error discovering instances: {e}")
+        return False
+
+
+# Fetch ingests and discover instances on startup
 fetch_and_categorize_ingests()
+discover_running_instances()
 
 
 # ============ WEB DASHBOARD ============
@@ -460,7 +495,7 @@ def dashboard():
                         
                         const statusBadge = document.getElementById('streamStatus');
                         const state = (data.state || 'UNKNOWN').toLowerCase();
-                        statusBadge.className = `status-badge ${state === 'running' ? 'online' : 'offline'}`;
+                        statusBadge.className = `status-badge ${state === 'running' || state === 'queued' ? 'online' : 'offline'}`;
                         statusBadge.textContent = data.state || 'UNKNOWN';
                     })
                     .catch(e => console.error('Error refreshing:', e));
@@ -589,135 +624,158 @@ def get_ingests_categorized():
 @app.route("/api/status")
 def api_status():
     """Check instance status - returns plain text."""
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance. Go live first."
+    try:
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance. Go live first."
 
-    url = f"{BASE_URL}/instances/{instance_id}"
-    r = requests.get(url, headers=HEADERS)
-    if not r.ok:
-        return f"Error {r.status_code}"
+        url = f"{BASE_URL}/instances/{instance_id}"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            return f"Error {r.status_code}"
 
-    data = r.json()
-    state = data.get("state", "UNKNOWN")
-    current_instance["state"] = state
-    return state
+        data = r.json()
+        state = data.get("state", "UNKNOWN")
+        current_instance["state"] = state
+        return state
+    except Exception as e:
+        print(f"Error in api_status: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/golive")
 def api_golive():
     """Start instance - returns plain text."""
-    body = {
-        "numberOfInstances": 1,
-        "instanceSettings": [
-            {
-                "name": "Live Stream Instance",
-                "overrides": {}
-            }
-        ]
-    }
+    try:
+        body = {
+            "numberOfInstances": 1,
+            "instanceSettings": [
+                {
+                    "name": "Live Stream Instance",
+                    "overrides": {}
+                }
+            ]
+        }
 
-    url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
-    r = requests.post(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error starting instance: {r.status_code} {r.text}"
+        url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        print(f"POST {url} with body: {body}")
+        r = requests.post(url, headers=HEADERS, json=body)
+        
+        if not r.ok:
+            error_text = r.text
+            print(f"Error {r.status_code}: {error_text}")
+            return f"Error {r.status_code}: {error_text}"
 
-    instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
-    instances_r = requests.get(instances_url, headers=HEADERS)
-    
-    if instances_r.ok:
-        instances = instances_r.json()
-        if instances:
-            latest = instances[0]
-            instance_id = latest.get("id")
-            if instance_id:
-                current_instance["id"] = instance_id
-                current_instance["started_at"] = datetime.now().isoformat()
-                current_instance["state"] = "QUEUED"
-                return "Starting stream"
+        instances_url = f"{BASE_URL}/configurations/{CONFIGURATION_ID}/instances"
+        instances_r = requests.get(instances_url, headers=HEADERS)
+        
+        if instances_r.ok:
+            instances_data = instances_r.json()
+            instances = instances_data.get("instances", [])
+            if instances:
+                latest = instances[0]
+                instance_id = latest.get("id")
+                if instance_id:
+                    current_instance["id"] = instance_id
+                    current_instance["started_at"] = datetime.now().isoformat()
+                    current_instance["state"] = "QUEUED"
+                    return "Starting stream"
 
-    return "Stream starting"
+        return "Stream starting"
+    except Exception as e:
+        print(f"Error in api_golive: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/stop")
 def api_stop():
     """Stop instance - returns plain text."""
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance"
-    
-    url = f"{BASE_URL}/instances/{instance_id}"
-    r = requests.delete(url, headers=HEADERS)
-    if r.status_code in (200, 204):
-        current_instance["id"] = None
-        current_instance["state"] = "STOPPED"
-        return "Stream stopped"
-    return f"Error {r.status_code}: {r.text}"
+    try:
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance"
+        
+        url = f"{BASE_URL}/instances/{instance_id}"
+        r = requests.delete(url, headers=HEADERS)
+        if r.status_code in (200, 204):
+            current_instance["id"] = None
+            current_instance["state"] = "STOPPED"
+            return "Stream stopped"
+        return f"Error {r.status_code}: {r.text}"
+    except Exception as e:
+        print(f"Error in api_stop: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/outputs")
 def api_outputs():
     """Toggle outputs - returns plain text."""
-    state = request.args.get("state", "LIVE").upper()
-    if state not in ("LIVE", "OFFLINE"):
-        return "Invalid state"
+    try:
+        state = request.args.get("state", "LIVE").upper()
+        if state not in ("LIVE", "OFFLINE"):
+            return "Invalid state"
 
-    instance_id = current_instance["id"]
-    if not instance_id:
-        return "No active instance. Start stream first."
+        instance_id = current_instance["id"]
+        if not instance_id:
+            return "No active instance. Start stream first."
 
-    # Correct endpoint: /instances/{id}/overrides
-    body = {
-        "outputstream-2": {
-            "outputs": state
+        body = {
+            "outputstream-2": {
+                "outputs": state
+            }
         }
-    }
-    url = f"{BASE_URL}/instances/{instance_id}/overrides"
-    r = requests.patch(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error {r.status_code}: {r.text}"
+        url = f"{BASE_URL}/instances/{instance_id}/overrides"
+        r = requests.patch(url, headers=HEADERS, json=body)
+        if not r.ok:
+            return f"Error {r.status_code}: {r.text}"
 
-    return f"Outputs {state}"
+        return f"Outputs {state}"
+    except Exception as e:
+        print(f"Error in api_outputs: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/switch-ingest")
 def api_switch_ingest():
     """Switch ingest input - returns plain text."""
-    ingest_id = request.args.get("ingest_id")
-    if not ingest_id:
-        return "Missing ingest_id"
+    try:
+        ingest_id = request.args.get("ingest_id")
+        if not ingest_id:
+            return "Missing ingest_id"
 
-    instance_id = current_instance["id"]
-    
-    if not instance_id:
-        return "No active instance. Start stream first."
+        instance_id = current_instance["id"]
+        
+        if not instance_id:
+            return "No active instance. Start stream first."
 
-    # Use correct endpoint for switching inputs
-    body = {
-        ingest_id: {
-            "enabled": True
+        body = {
+            ingest_id: {
+                "enabled": True
+            }
         }
-    }
-    
-    url = f"{BASE_URL}/instances/{instance_id}/overrides"
-    r = requests.patch(url, headers=HEADERS, json=body)
-    if not r.ok:
-        return f"Error {r.status_code}: {r.text}"
+        
+        url = f"{BASE_URL}/instances/{instance_id}/overrides"
+        r = requests.patch(url, headers=HEADERS, json=body)
+        if not r.ok:
+            return f"Error {r.status_code}: {r.text}"
 
-    return f"Switched to {ingest_id}"
+        return f"Switched to {ingest_id}"
+    except Exception as e:
+        print(f"Error in api_switch_ingest: {e}")
+        return f"Error: {str(e)}"
 
 
 @app.route("/api/destinations")
 def api_destinations():
     """List destinations - returns plain text."""
-    url = f"{BASE_URL}/destinations"
-    r = requests.get(url, headers=HEADERS)
-    if not r.ok:
-        return f"Error {r.status_code}"
-
     try:
+        url = f"{BASE_URL}/destinations"
+        r = requests.get(url, headers=HEADERS)
+        if not r.ok:
+            return f"Error {r.status_code}"
+
         data = r.json()
         lines = []
         for d in data:
@@ -725,8 +783,16 @@ def api_destinations():
             dest_id = d.get("id", "no-id")
             lines.append(f"{name}:{dest_id}")
         return " | ".join(lines) or "No destinations"
-    except Exception:
-        return "Error parsing"
+    except Exception as e:
+        print(f"Error in api_destinations: {e}")
+        return f"Error: {str(e)}"
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    """Handle 500 errors gracefully."""
+    print(f"500 Error: {e}")
+    return f"Server Error: {str(e)}", 500
 
 
 if __name__ == "__main__":
